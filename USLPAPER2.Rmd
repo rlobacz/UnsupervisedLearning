@@ -1,0 +1,469 @@
+---
+title: "Dimension reduction influence on classification"
+date: "2021-01-17"
+author: "Rafał Łobacz"
+output: html_document
+---
+
+
+# Introduction
+
+In this article I would like to check how dimension reduction influence data classification, by examining how prediction accuracy and model computing time differ before and after applying Principal Component Analysis (PCA). Research will be conducted on colorectal cancer data from Curated Microarray Database (CuMiDa). Article is divided into 2 parts. First part is about exploratory data analysis, where mostly I will use PCA to examine the data. Second part is about fitting and predicting 5 types of models – CLARA, Kmeans, Hierarchical Clustering, SVM and Random Forest. First 3 methods are unsupervised learning, clustering algorithms, where SVM and Random Forest are supervised methods, widely used in many fields that produce very often good results.  
+
+# Exploratory Data Analysis
+
+Reading libraries
+```{r,message=FALSE}
+library(data.table)
+library(randomForest)
+library(factoextra)
+library(e1071)
+library(flexclust)
+library(tidyverse)
+library(class)
+library(clusterSim)
+library(gridExtra)
+library(ggplot2)
+library(knitr)
+```
+
+Let`s read the data and check dimensionality.
+
+```{r}
+df <- fread('Colorectal_GSE44076.csv')
+dim(df)
+```
+
+As we can see there are 194 rows and 49388 columns. It is not good that data have more columns than rows, but in our case we want to show how pca affect classification, the more columns to reduce the better. Let`s summarise first 6 columns and check how some part of the data looks.
+
+```{r}
+summary(df[,1:6]) %>% kable()
+```
+
+As we can see first column 'samples' consist of unique values of data, 'type' column is the type of cancer and all other columns are numeric description of each cancer value. Let`s check the types of cancer.
+```{r}
+table(df$type)
+```
+Perfect we got balanced data. There are 2 types of cancer: adenocarcinoma and normal. Let`s check if there are any missing values.
+```{r}
+sum(is.na(df))
+```
+There are no missing values. Let`s try to explore our data using PCA. I will only use PCA because MDS algorithm is not optimized, it took too much time to finish and my patience ran out.
+```{css, echo=FALSE}
+.scroll-300 {
+  max-height: 300px;
+  overflow-y: auto;
+  background-color: inherit;
+}
+```
+
+```{r, class.output="scroll-300"}
+PCA_1 <- prcomp(df[,3:ncol(df)],center=T,scale.=T)
+summary(PCA_1)
+```
+When we perform PCA and data got more columns than rows, the maximum number of PCs produced is the number of rows. As we can see 194 PCs were produced and  first 2 PCs explain only 25% of variance. Normally it would not be good, but when we consider that initiall data got 49388 columns, it is not that bad. Let`s visualise PCA by rows and columns.
+
+```{r}
+fviz_pca_var(PCA_1,col.var = 'steelblue' )
+fviz_pca_ind(PCA_1,col.ind = df$type)
+```
+
+We can not say too much about first plot, there are many variables all over the plot. Looking at second plot we can clearly see 2 groups of cancer. We can easily distinguish them just from 2 dimension that explain 25% of data. There are like 5 controversial points that algorithms can have problems. Even though I am expecting >95% accuracy of classification just looking at this plot. Let`s draw some scree plots now.
+
+```{r}
+p_1 <- fviz_eig(PCA_1, choice='eigenvalue')
+p_2 <- fviz_eig(PCA_1)
+grid.arrange(p_1,p_2,ncol=2)
+```
+
+From the first plot we can see that PCs got very high eigenvalues that drop exponentially, from the second plot we can see that after 6 dimensions variance explained is very small. Let`s now plot the cumulative variance plot.
+
+```{r}
+ggplot() + geom_line(aes(x=1:194,y=summary(PCA_1)$importance[3,])) + 
+  labs(y="Cumulative Variance", x="index",title="Variance explained") + theme_bw()
+```
+
+Plot is very unusual, most of the dimensions explain very small percentage of variance. Only first few PCs up to ~45% of cumulative variance explain some significant part of data.
+
+```{r, class.output="scroll-300"}
+eig.val<-get_eigenvalue(PCA_1)
+eig.val
+```
+
+I decided that I will use only those PCs that explain more than 1% of variance.
+
+# Classification
+
+## Data preparation - splitting data to train and test
+
+Our data is balanced, so we will take 15 random samples from each type of cancer as the test data. The best approach would be to perform k-fold cross validation but with 5 types of models it could take too much time.
+
+```{r}
+set.seed(123)
+df %>% dplyr::select(samples,type) %>% filter(type=='adenocarcinoma') %>% pull(samples) %>% 
+  sample(15) ->t_1
+
+df %>% dplyr::select(samples,type) %>% filter(type=='normal') %>% pull(samples) %>% 
+  sample(15) ->t_2
+
+train <- df %>% filter(!samples %in% c(t_1,t_2))
+test <- df %>% filter(samples %in% c(t_1,t_2))
+
+train_X <- train %>% dplyr::select(-samples,-type)
+train_Y <- train %>% dplyr::select(type)
+test_X <- test %>% dplyr::select(-samples,-type)
+test_Y <- test %>% dplyr::select(type)
+```
+
+Let`s perform also PCA on data and visualise which sample was taken as test data. As I said previously I will take only PCs with Variance explained greater than 1%. It turned out to be first 12 PCs
+
+```{r}
+X_PCA<-prcomp(train_X,center=T,scale.=T)
+test_X_N <- predict(X_PCA,test_X)
+train_X_N <- X_PCA$x[,1:12]
+test_X_N <- test_X_N[,1:12]
+
+plot(train_X_N[,1:2],col='black',cex=1.5)
+points(test_X_N[,1:2],pch=21,bg="purple",cex=1.5)
+legend('bottomright',legend=c('train','test'),fill=c('black','purple'))
+```
+
+As we can see on the plot almost all test data are in the center of groups. Most of the algorithms will probably have no problem classifying them.
+Now I will create matrices to store computing time and accuracy values.
+```{r}
+df_acc <- data.frame( train_test = character(), CLARA=numeric(),CLARA_PCA=numeric(),
+                     KMEANS=numeric(),KMEANS_PCA=numeric(),
+                     HCLUST=numeric(),HCLUST_PCA=numeric(),SVM=numeric(),SVM_PCA=numeric(),
+                     RF=numeric(),RF_PCA=numeric())
+df_acc[1:2,2:11] <- 0
+df_acc$train_test <- c('train','test')
+
+#creating matrix to store time computing 
+df_time <- data.frame( CLARA=numeric(),CLARA_PCA=numeric(),
+                      KMEANS=numeric(),KMEANS_PCA=numeric(),
+                      HCLUST=numeric(),HCLUST_PCA=numeric(),SVM=numeric(),SVM_PCA=numeric(),
+                      RF=numeric(),RF_PCA=numeric())
+df_time[1,1:10] <- 0
+rownames(df_time) <- 'train_time'
+```
+
+## Perfoming classification
+
+First 3 algorithms that will be used are clustering methods. They group objects in a way that in the same group(cluster) observations are more similar to each other than to those in other groups. First method - CLARA(Clustering Large Applications) is an extension to k-medoids (PAM) methods to deal with data containing a large number of objects in order to reduce computing time. This is achieved using the sampling approach. Next method is  k-means. This is the most popular clustering method that partition observations to k clusters in which observations belong to the cluster with the nearest mean (centroid). The last clustering method is hclust - hierarchical clustering that seeks to build a hierarchy of clusters. Other two methods are supervised algorithms. Support Vector Machines(SVM) uses linear or non-linear classifier that separates the space, into two or more regions that are called classes. Random forest is an ensemble method that trains several decision trees in parallel with bootstrapping followed by aggregation. Now I am going to perform each model on raw data and dimension reduced data.
+
+### Classifications on raw data
+
+#### Clara
+
+Training 
+```{r}
+ptm_1 <- proc.time()
+clara_train <- eclust(train_X,"clara", hc_metric="euclidean",k=2,graph=F)
+t_1 <- proc.time() - ptm_1
+table_1 <- table(clara_train$cluster,train_Y$type)
+table_1
+score_clara_train <- sum(apply(table_1, 2, max))/164
+df_acc[1,"CLARA"] <- round(score_clara_train*100,2)
+df_time[1] <- t_1[3]
+paste('Accuracy on training data:', score_clara_train)
+paste('Model trained in:' , t_1[3] ,' sec.')
+```
+
+Test
+```{r}
+clara_test_kcca<-as.kcca(clara_train, train_X) 
+clara_pred<-predict(clara_test_kcca, test_X) 
+table_11 <- table(clara_pred,test_Y$type)
+table_11
+score_clara_test <- sum(apply(table_11, 2, max))/30
+df_acc[2,"CLARA"] <- round(score_clara_test*100,2)
+paste('Accuracy on test data:', score_clara_test)
+```
+
+#### Kmeans
+
+Training 
+```{r}
+ptm_2 <- proc.time()
+kmeans_train <- eclust(train_X,"kmeans", hc_metric="euclidean",k=2,graph=F)
+t_2 <- proc.time() - ptm_2
+table_2 <- table(kmeans_train$cluster,train_Y$type)
+table_2
+score_kmeans_train <- sum(apply(table_2, 2, max))/164
+df_acc[1,"KMEANS"] <- round(score_kmeans_train*100,2)
+df_time[3] <- t_2[3]
+paste('Accuracy on training data:', score_kmeans_train)
+paste('Model trained in:' , t_2[3] ,' sec.')
+```
+
+Test
+```{r}
+kmeans_test_kcca<-as.kcca(kmeans_train, train_X) 
+kmeans_pred<-predict(kmeans_test_kcca, test_X) 
+table_21 <- table(kmeans_pred,test_Y$type)
+table_21
+kmeans_clara_test <- sum(apply(table_21, 2, max))/30
+df_acc[2,"KMEANS"] <- round(kmeans_clara_test*100,2)
+paste('Accuracy on test data:', kmeans_clara_test)
+```
+
+#### Hclust
+
+Training 
+```{r}
+ptm_3 <- proc.time()
+hclust_train <- eclust(train_X,"hclust", hc_metric="euclidean",k=2,graph=F)
+t_3 <- proc.time() - ptm_3
+table_3 <- table(hclust_train$cluster,train_Y$type)
+table_3
+score_hclust_train <- sum(apply(table_3, 2, max))/164
+df_acc[1,"HCLUST"] <- round(score_hclust_train*100,2)
+df_time[5] <- t_3[3]
+paste('Accuracy on training data:', score_hclust_train)
+paste('Model trained in:' , t_3[3] ,' sec.')
+```
+
+Test
+```{r}
+groups<-cutree(hclust_train,k=2)
+hclust_pred<-knn(train_X, test_X,k=1,cl=groups) 
+table_31 <- table(hclust_pred,test_Y$type)
+table_31
+kmeans_hclust_test <- sum(apply(table_31, 2, max))/30
+df_acc[2,"HCLUST"] <- round(kmeans_hclust_test*100,2)
+paste('Accuracy on test data:', kmeans_hclust_test)
+```
+
+#### SVM
+
+Training 
+```{r}
+ptm_4 <- proc.time()
+model4 <- svm(x=train_X,y=factor(train_Y$type), kernel = "linear", scale = FALSE)
+t_4 <- proc.time() - ptm_4
+table_4 <- table(model4$fitted,train_Y$type)
+table_4
+svm_train <- sum(apply(table_4, 2, max))/164
+df_acc[1,"SVM"] <- round(svm_train*100,2)
+df_time[7] <- t_4[3]
+paste('Accuracy on training data:', svm_train)
+paste('Model trained in:' , t_4[3] ,' sec.')
+```
+
+Test
+```{r}
+model4_predict <- predict(model4,test_X)
+table_41 <- table(model4_predict,test_Y$type)
+table_41
+svm_test <- sum(apply(table_41, 2, max))/30
+df_acc[2,"SVM"] <- round(svm_test*100,2)
+paste('Accuracy on test data:', svm_test)
+```
+
+#### Random Forest
+
+Training 
+```{r}
+ptm_5 <- proc.time()
+model5 <- randomForest(x=train_X,y=factor(train_Y$type))
+t_5 <- proc.time() - ptm_5
+table_5 <- table(model5$predicted,train_Y$type)
+table_5
+rf_train <- sum(apply(table_5, 2, max))/164
+df_acc[1,"RF"] <- round(rf_train*100,2)
+df_time[9] <- t_5[3]
+paste('Accuracy on training data:', rf_train)
+paste('Model trained in:' , t_5[3] ,' sec.')
+```
+
+Test
+```{r}
+model5_predict <- predict(model5,test_X)
+table_51 <- table(model5_predict,test_Y$type)
+table_51
+rf_test <- sum(apply(table_51, 2, max))/30
+df_acc[2,"RF"] <- round(rf_test*100,2)
+paste('Accuracy on test data:', rf_test)
+```
+
+#### Comments about classification on raw data
+
+As we can see all algorithms did not have any problems predicting test data. When it comes to training data the best algorithm is SVM, it classified whole training set correctly. This is not a surprise, as SVM tends to overfit data and we got many columns. Clara fitted the data worst, there were 6 observations wrongly classified. RF missclasified 3, Kmeans 2 and Hclust 3. When it comes to computing time SVM is the winner, it only took few seconds to run. Classification methods needed from 20 to 30 seconds and surprisingly for me RF was the slowest, it took more than 1 minute to run.  
+
+### Classifications on PCA
+
+#### Clara
+
+Training 
+```{r}
+ptm_6 <- proc.time()
+clara_train_pca <- eclust(train_X_N,"clara", hc_metric="euclidean",k=2,graph = F)
+t_6 <- proc.time() - ptm_6
+table_1_pca <- table(clara_train_pca$cluster,train_Y$type)
+table_1_pca
+score_clara_train_pca <- sum(apply(table_1_pca, 2, max))/164
+df_acc[1,"CLARA_PCA"] <- round(score_clara_train_pca*100,2)
+df_time[2] <- t_6[3]
+paste('Accuracy on test data:', score_clara_train_pca)
+paste('Model trained in:' , t_6[3] ,' sec.')
+```
+
+Test
+```{r}
+clara_test_kcca_pca<-as.kcca(clara_train_pca, train_X_N) 
+clara_pred_pca<-predict(clara_test_kcca_pca, test_X_N) 
+table_11_pca <- table(clara_pred_pca,test_Y$type)
+table_11_pca
+score_clara_test_pca <- sum(apply(table_11_pca, 2, max))/30
+df_acc[2,"CLARA_PCA"] <- round(score_clara_test_pca*100,2)
+paste('Accuracy on test data:', score_clara_test_pca)
+```
+
+#### Kmeans
+
+Training 
+```{r}
+ptm_7 <- proc.time()
+kmeans_train_pca <- eclust(train_X_N,"kmeans", hc_metric="euclidean",k=2,graph=F)
+t_7 <- proc.time() - ptm_7
+table_2_pca <- table(kmeans_train_pca$cluster,train_Y$type)
+table_2_pca
+score_kmeans_train_pca <- sum(apply(table_2_pca, 2, max))/164
+df_acc[1,"KMEANS_PCA"] <- round(score_kmeans_train_pca*100,2)
+df_time[4] <- t_7[3]
+paste('Accuracy on test data:', score_kmeans_train_pca)
+paste('Model trained in:' , t_7[3] ,' sec.')
+```
+
+Test
+```{r}
+kmeans_test_kcca_pca<-as.kcca(kmeans_train_pca, train_X_N) 
+kmeans_pred_pca<-predict(kmeans_test_kcca_pca, test_X_N) 
+table_21_pca <- table(kmeans_pred_pca,test_Y$type)
+table_21_pca
+score_kmeans_test_pca <- sum(apply(table_21_pca, 2, max))/30
+df_acc[2,"KMEANS_PCA"] <- round(score_kmeans_test_pca*100,2)
+paste('Accuracy on test data:', score_kmeans_test_pca)
+```
+
+#### Hclust
+
+Training 
+```{r}
+ptm_8 <- proc.time()
+hclust_train_pca <- eclust(train_X_N,"hclust", hc_metric="euclidean",k=2,graph=F)
+t_8 <- proc.time() - ptm_8
+table_3_pca <- table(hclust_train_pca$cluster,train_Y$type)
+table_3_pca
+score_hclust_train_pca <- sum(apply(table_3_pca, 2, max))/164
+df_acc[1,"HCLUST_PCA"] <- round(score_hclust_train_pca*100,2)
+df_time[6] <- t_8[3]
+paste('Accuracy on test data:', score_hclust_train_pca)
+paste('Model trained in:' , t_8[3] ,' sec.')
+```
+
+Test
+```{r}
+groups_N<-cutree(hclust_train_pca,k=2)
+hclust_pred_N<-knn(train_X_N, test_X_N,k=1,cl=groups_N) 
+table_31_pca <- table(hclust_pred_N,test_Y$type)
+table_31_pca
+score_hclust_test_PCA <- sum(apply(table_31_pca, 2, max))/30
+df_acc[2,"HCLUST_PCA"] <- round(score_hclust_test_PCA*100,2)
+paste('Accuracy on test data:', score_hclust_test_PCA)
+```
+
+#### SVM
+
+Training 
+```{r}
+ptm_9 <- proc.time()
+model4_PCA <- svm(x=train_X_N,y=factor(train_Y$type), kernel = "linear", scale = FALSE)
+t_9 <- proc.time() - ptm_9
+table_4_PCA <- table(model4_PCA$fitted,train_Y$type)
+table_4_PCA
+svm_train_PCA <- sum(apply(table_4_PCA, 2, max))/164
+df_acc[1,"SVM_PCA"] <- round(svm_train_PCA*100,2)
+df_time[8] <- t_9[3]
+paste('Accuracy on test data:', svm_train_PCA)
+paste('Model trained in:' , t_9[3] ,' sec.')
+```
+
+Test
+```{r}
+model4_predict_PCA <- predict(model4_PCA,test_X_N)
+table_41_PCA <- table(model4_predict_PCA,test_Y$type)
+table_41_PCA
+svm_test_PCA <- sum(apply(table_41_PCA, 2, max))/30
+df_acc[2,"SVM_PCA"] <- round(svm_test_PCA*100,2)
+paste('Accuracy on test data:', svm_test_PCA)
+```
+
+#### Random Forest
+
+Training 
+```{r}
+ptm_10 <- proc.time()
+model5_PCA <- randomForest(x=train_X_N,y=factor(train_Y$type))
+t_10 <- proc.time() - ptm_10
+table_5_PCA <- table(model5_PCA$predicted,train_Y$type)
+table_5_PCA
+rf_train_PCA <- sum(apply(table_5_PCA, 2, max))/164
+df_acc[1,"RF_PCA"] <- round(rf_train_PCA*100,2)
+df_time[10] <- t_10[3]
+paste('Accuracy on test data:', rf_train_PCA)
+paste('Model trained in:' , t_10[3] ,' sec.')
+```
+
+Test
+```{r}
+model5_predict_PCA <- predict(model5_PCA,test_X_N)
+table_51_PCA <- table(model5_predict_PCA,test_Y$type)
+table_51_PCA
+rf_test_PCA <- sum(apply(table_51_PCA, 2, max))/30
+df_acc[2,"RF_PCA"] <- round(rf_test_PCA*100,2)
+paste('Accuracy on test data:', rf_test_PCA)
+```
+
+#### Comments
+
+At first glance we can see that computing time lowered drastically. Only random forest needs few seconds to run, all other algorithms run in the nick of time. When it comes to accuracy, one more time all algorithms predict in 100% test data. Classification on training data is also good, CLara and Kmeans classifed 4 observations wrong, Hclust and Random Forest 2 wrong and SVM classified everything good. 
+
+## Comparing classification on raw data vs PCA
+
+Firstly let`s print table of computation times.
+
+```{r}
+
+df_time %>% kable()
+
+```
+
+As we can see there is incredible difference between running time of algorithms on raw data vs on data after PCA.
+Let`s look at accuracy matrix now.
+
+```{r}
+
+df_acc %>% kable()
+
+```
+
+We can see that accuracy even improved on PCA. Only Kmeans perform worse after PCA. This is great information, we did not have trade off between computing time and accuracy.
+
+<font size="6"> Summary </font>
+
+Goal of this paper was to check how dimension reduction with PCA influence data classification procedure. We can definitely see that running time of algorithms drops drastically. Although making statements about accuracy is tricky here. It seems like PCA does not have any negative influence on predictions and classifications. Yet metodology was not perfect here, k-fold cross validation should be performed. Data itself is not ordinary, there are more columns than rows. Moreover SVM seems to be the best classification method in comparison to other on used data.
+
+<font size="6"> Bibliography </font>
+
+https://stanford.edu/~cpiech/cs221/handouts/kmeans.html
+
+https://www.datanovia.com/en/lessons/clara-in-r-clustering-large-applications/
+
+https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/hclust
+
+https://www.analyticsvidhya.com/blog/2017/09/understaing-support-vector-machine-example-code/
+
+https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm
+
+https://stackoverflow.com/questions/42325276/how-to-use-pca-on-test-set-code

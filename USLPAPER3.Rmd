@@ -1,0 +1,447 @@
+---
+title: "Association Rules mining on survey about data science jobs."
+date: "2021-02-09"
+author: "Rafał Łobacz"
+output: html_document
+---
+
+# Introduction
+
+Market basket analysis is one of the data mining techniques to find patterns between items. It is mostly used on transactional data in retail or marketing industries. In analysing market basket analysis, association rules take important part. They work by looking for combinations of items that occur together frequently in transactions, creating If-Then rules: if A is purchased then B is also likely to be purchased.\
+Although association rules might be also used on other types of data and in different scenario. Some applications consist: medical diagnosis, stock market analysis or churn analysis. In this paper I will apply apriori algorithm to answer the question if tools/algorithms used in data science differ by industry.\
+Data used comes from kaggle survey from 2017 year - [link](https://www.kaggle.com/kingabzpro/datascience-survey-on-kaggle). Based on this data I will try to check if there are associations between the type of industry and tools/algorithms that people use in data science related jobs.\
+Article is divided into 3 parts. First part is about data preparation, second covers finding association rules about tools and the last one consist association rules about algorithms.
+
+# Data preparation
+
+Reading libraries
+```{r,message=FALSE}
+library(tidyverse)
+library(knitr)
+library(arules)
+library(arulesViz)
+```
+
+Let`s read the data and check dimensionality.
+
+```{r}
+df <- read.csv('kagglesurvey.csv',na.strings=c("","NA"))
+dim(df)
+```
+
+As we can see there are 10153 rows and 5 columns. Let`s look at variable types.
+
+```{r}
+summary(df) %>% kable() %>% kableExtra::kable_styling()
+
+```
+
+The first column 'Respondent' consist of unique values of survey participants. All other features are character types. In analysis, we will be interested only in WorkToolsSelect - tools that people use in their jobs, EmployerIndustry - type of industry that the employer firm belongs to and WorkAlgorithmsSelect - algorithms that worker is using in his/her job. 
+
+```{r}
+df[3:6,] %>% kable(row.names=FALSE) %>% kableExtra::kable_styling()
+
+```
+
+There are some missing values. I will delete them and visualise industry data.
+
+```{r, fig.height = 6, fig.width = 10, fig.align = "right"}
+df <- na.omit(df)
+pie(sort(table(df$EmployerIndustry)),main = 'Share of industries')
+```
+
+As we can see there are many industries in which data scientists work. I will analyse only the 3 most popular: Technology, Academic and Financial. Furthermore, I decided to join Telecommunications to Technology and Insurance to Financial industry.
+
+```{r}
+df$EmployerIndustry <- ifelse(df$EmployerIndustry=='Telecommunications','Technology',df$EmployerIndustry)
+df$EmployerIndustry <- ifelse(df$EmployerIndustry=='Insurance','Financial',df$EmployerIndustry)
+```
+
+Now I will prepare data for apriori algorithm. Data is going to be in wide format, first column will consist industry type and all other columns include single records of each used tool/algorithm per person.
+
+```{r}
+#creating matrix for tools
+m_col <- max(apply(array(df$WorkToolsSelect),1,function(x)length(c(str_split(x,','))[[1]])))
+foo_m <- matrix('', nrow = nrow(df), ncol =  m_col)
+
+#splitting from single observation to multiple observations
+for( i in 1:nrow(df)){
+  foo_vec <- c(str_split(df$WorkToolsSelect[i],',')[[1]])
+  foo_m[i,1:length(foo_vec)] <- foo_vec
+}
+foo_m <- cbind(df$EmployerIndustry,foo_m)
+#saving to csv
+write.csv(foo_m, file="lang_ds.csv")
+
+#creating matrix for algorithms
+m_col <- max(apply(array(df$WorkAlgorithmsSelect),1,function(x)length(c(str_split(x,','))[[1]])))
+foo_m <- matrix('', nrow = nrow(df), ncol =  m_col)
+
+#splitting from single observation to multiple observations
+for( i in 1:nrow(df)){
+  foo_vec <- c(str_split(df$WorkAlgorithmsSelect[i],',')[[1]])
+  foo_m[i,1:length(foo_vec)] <- foo_vec
+}
+foo_m <- cbind(df$EmployerIndustry,foo_m)
+#saving to csv
+write.csv(foo_m, file="algo_ds.csv")
+```
+
+# Asscociaton rules for tools
+
+Reading data for apriori algorithm and summarising it.
+
+```{r,warning=FALSE}
+trans1<-read.transactions("lang_ds.csv", format="basket", sep=",", skip=1) 
+```
+
+
+### {.tabset}
+
+#### Summary    
+
+```{r}
+summary(trans1)
+```
+
+#### Length of associations
+
+```{r}
+plot(summary(trans1)@lengths,ylab='Frequency',xlab='size',main='Density of sizes')
+```
+
+#### Frequency Plot
+
+```{r}
+itemFrequencyPlot(trans1, topN=25, type="relative", main="ItemFrequency", col=wesanderson::wes_palette(name = 'GrandBudapest2')) 
+```
+
+### {-}
+
+As we can see from the summary of all 'transactions' most of the people use between 3 and 9 tools/languages in their job. The most popular are Python, R and SQL. Worth mentioning is also that not that many people restrain themselves to only one tool. This can be valuable for new people who are one language lover.
+
+
+## Technology
+
+In the next parts I will run apriori algorithms. The most important parameters that analyst must declare are minimum support and confidence. Support depicts the fraction of answers that contain specified items and confidence tells us how much combination of "if" with "then" is often.
+In Data Science tools are widely used among all industries. To obtain sweet spot between popularity and acceptable confidence I calibrated the support to 0.005 and conf to 0.08. Specifying support to lower level leads to items that are rarely used. Count was lower than 10. The big picture could be skewed because of that. Goal here is to find some more universal characterisation of industries.
+
+```{r}
+rules_technology<-apriori(data=trans1, parameter=list(supp=0.005, conf=0.08), appearance=list(default="lhs", rhs="Technology"), control=list(verbose=F)) 
+
+count <- DATAFRAME(sort(rules_technology,by="count"))
+count[,3:7] <- round(count[,3:7],4)
+
+confident <- DATAFRAME(sort(rules_technology,by="confidence"))
+confident[,3:7] <- round(confident[,3:7],4)
+
+```
+
+### {.tabset}
+
+#### Count    
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(count,filter = 'top',rownames = FALSE)
+```
+
+#### Confidence
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(confident,filter = 'top',rownames = FALSE)
+```
+
+### {-}
+
+We can see that in technology people are Python lovers. R and SQL are also very popular and are followed by two tools: Jupyter notebooks and tensorflow. Sorting the results by confidence, still we can see that Python is in almost every association. Associations with the most confidence share between them tools like: Spark/MLlib, SQL, TensorFlow, Unix Shell/awk. Moreover, there are also used things like C++, Hadoop or IBM Watson.\
+Below every results I will post two interactive plots: scatter-plot and graph.
+
+### {.tabset}
+
+#### Scatter-plot
+
+```{r,message=FALSE,warning=FALSE}
+plot(rules_technology,engine='plotly')
+```
+
+#### Graph 
+
+```{r}
+plot(sort(rules_technology,by="confidence")[1:5], method = "graph",  engine = "htmlwidget")
+```
+
+### {-}
+
+## Financial
+
+```{r}
+rules_financial<-apriori(data=trans1, parameter=list(supp=0.005, conf=0.08), appearance=list(default="lhs", rhs="Financial"), control=list(verbose=F)) 
+
+count <- DATAFRAME(sort(rules_financial,by="count"))
+count[,3:7] <- round(count[,3:7],4)
+
+confident <- DATAFRAME(sort(rules_financial,by="confidence"))
+confident[,3:7] <- round(confident[,3:7],4)
+
+```
+
+### {.tabset}
+
+#### Count    
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(count,filter = 'top',rownames = FALSE)
+```
+
+#### Confidence
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(confident,filter = 'top',rownames = FALSE)
+```
+
+### {-}
+
+In finance python is also the most popular language but the difference between the second most popular is very small. We can even state that there are three equally used languages: Python, R and SQL. Furthermore, the combinations of those three tools are very common, like: Python & R, Python & SQL or R & SQL. Looking at confidence, the picture is different. SAS is the king now. SAS Base, SAS Enterpise Miner, SQL and R are the tools that baskets of their combinations got the biggest confidence value. This approved my perception that SAS is commonly used in banks and other financial institutions but it is not that popular elsewhere.
+
+
+### {.tabset}
+
+#### Scatter-plot
+
+```{r,message=FALSE,warning=FALSE}
+plot(rules_financial,engine='plotly')
+```
+
+#### Graph 
+
+```{r}
+plot(sort(rules_financial,by="confidence")[1:5], method = "graph",  engine = "htmlwidget")
+```
+
+### {-}
+
+
+## Academic   
+
+```{r}
+rules_academic<-apriori(data=trans1, parameter=list(supp=0.005, conf=0.08), appearance=list(default="lhs", rhs="Academic"), control=list(verbose=F)) 
+
+count <- DATAFRAME(sort(rules_academic,by="count"))
+count[,3:7] <- round(count[,3:7],4)
+
+confident <- DATAFRAME(sort(rules_academic,by="confidence"))
+confident[,3:7] <- round(confident[,3:7],4)
+```
+
+### {.tabset}
+
+#### Count    
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(count,filter = 'top',rownames = FALSE)
+```
+
+#### Confidence
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(confident,filter = 'top',rownames = FALSE)
+```
+
+### {-}
+
+In academia Python and R are also the most popular. We can see the set of new tools: Matlab/Octave. They are used in science for some numerical computations. Looking further at support, C/C++ are also quite popular and SQL is less popular than in private sector. This could probably be explained in a way that people working in private firms use data from databases constructed from their customers behaviour, so they need SQL to query desired observations. Based on the queried data they perform data science things. On the other hand academic data science can be more theoretical, so they do not need data too much.\
+Looking at confidence there are many different associations but almost in every one of them Matlab/Octave and C/C++ are present. Worth mentioning is also the presence of SPSS in the association with the highest confidence and Mathematica in the third one.\
+Those differences can probably also be explained in such a way that people in academia are experienced and are working on/with data science methods for a long time, using tools that were popular years ago, learning them when they were young. They also do not have time to learn new languages when they are efficient in old ones. While people in business are younger, have more time, so they learn tools that are new and popular.
+
+### {.tabset}
+
+#### Scatter-plot
+
+```{r,message=FALSE,warning=FALSE}
+plot(rules_academic,engine='plotly')
+```
+
+#### Graph 
+
+```{r}
+plot(sort(rules_academic,by="confidence")[1:5], method = "graph",  engine = "htmlwidget")
+```
+
+### {-}
+
+# Asscociaton rules for algorithms
+
+Reading data for apriori algorithm and summarising it.
+
+```{r,warning=FALSE}
+trans2<-read.transactions("algo_ds.csv", format="basket", sep=",", skip=1) 
+```
+
+### {.tabset}
+
+#### Summary    
+
+```{r}
+summary(trans2)
+```
+
+#### Length of associations
+
+```{r}
+plot(summary(trans2)@lengths,ylab='Frequency',xlab='size',main='Density of sizes')
+```
+
+#### Frequency Plot
+
+```{r}
+itemFrequencyPlot(trans2, topN=15, type="relative", main="Item Frequency",
+                  col=wesanderson::wes_palette(name = 'Royal2'))
+```
+
+### {-}
+
+From brief summary we can see that linear/logistic regression is the most popular algorithm, followed by decision trees and random forests. Most of the people use between 2 and 6 algorithms in their job.
+
+## Technology
+
+
+```{r}
+rules_technology<-apriori(data=trans2, parameter=list(supp=0.005, conf=0.08), appearance=list(default="lhs", rhs="Technology"), control=list(verbose=F)) 
+
+count <- DATAFRAME(sort(rules_technology,by="count"))
+count[,3:7] <- round(count[,3:7],4)
+
+confident <- DATAFRAME(sort(rules_technology,by="confidence"))
+confident[,3:7] <- round(confident[,3:7],4)
+```
+
+### {.tabset}
+
+#### Count    
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(count,filter = 'top',rownames = FALSE)
+```
+
+#### Confidence
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(confident,filter = 'top',rownames = FALSE)
+```
+
+### {-}
+
+In technology the most popular algorithms are the same as in whole sample. When we look at confidence, bayesian techniques, CNN(Convolutional neural network) and Neural Networks are the most specific for this industry. Overall there is very broad choice of algorithms in technology. There are also people who use GAN(Generative Adversarial Networks), RNN(Recurrent Neural Network) or HMM(Hidden Markov model).
+
+### {.tabset}
+
+#### Scatter-plot
+
+```{r,message=FALSE,warning=FALSE}
+plot(rules_technology,engine='plotly')
+```
+
+#### Graph 
+
+```{r}
+plot(sort(rules_technology,by="confidence")[1:5], method = "graph",  engine = "htmlwidget")
+```
+
+### {-}
+
+## Financial
+
+```{r}
+rules_financial<-apriori(data=trans2, parameter=list(supp=0.005, conf=0.08), appearance=list(default="lhs", rhs="Financial"), control=list(verbose=F)) 
+
+count <- DATAFRAME(sort(rules_financial,by="count"))
+count[,3:7] <- round(count[,3:7],4)
+
+confident <- DATAFRAME(sort(rules_financial,by="confidence"))
+confident[,3:7] <- round(confident[,3:7],4)
+```
+
+### {.tabset}
+
+#### Count    
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(count,filter = 'top',rownames = FALSE)
+```
+
+#### Confidence
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(confident,filter = 'top',rownames = FALSE)
+```
+
+### {-}
+
+In finance, looking at popularity, regression, decision trees and random forest are the most used. Confidence states that combination of bayesian techniques, ensemble methods, gradient boosted machines, regression and SVM are the most specific for this industry. Although the statistic is low. This tells us that almost every algorithm is used. The difference between finance and technology is that popularity of neural networks, CNN and RNN is low here. 
+
+### {.tabset}
+
+#### Scatter-plot
+
+```{r,message=FALSE,warning=FALSE}
+plot(rules_financial,engine='plotly')
+```
+
+#### Graph 
+
+```{r}
+plot(sort(rules_financial,by="confidence")[1:5], method = "graph",  engine = "htmlwidget")
+```
+
+### {-}
+
+
+## Academic   
+
+```{r}
+rules_academic<-apriori(data=trans2, parameter=list(supp=0.005, conf=0.08), appearance=list(default="lhs", rhs="Academic"), control=list(verbose=F)) 
+
+count <- DATAFRAME(sort(rules_academic,by="count"))
+count[,3:7] <- round(count[,3:7],4)
+
+confident <- DATAFRAME(sort(rules_academic,by="confidence"))
+confident[,3:7] <- round(confident[,3:7],4)
+```
+
+### {.tabset}
+
+#### Count    
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(count,filter = 'top',rownames = FALSE)
+```
+
+#### Confidence
+
+```{r,message = FALSE,warning=FALSE}
+DT::datatable(confident,filter = 'top',rownames = FALSE)
+```
+
+### {-}
+
+In the academia popularity of methods is similar to the previous cases, with the difference that neural networks are the second most popular algorithm. Looking at confidence the results are totally different than in previous two private sectors. People in academia use HMM, RNN, Neural Networks and the most interesting thing for me - evolutionary approaches. This results can only approve our suppositions that people in universities, researchers are working on new and complex methods, while private sector is mostly using old and tested algorithms. 
+
+### {.tabset}
+
+#### Scatter-plot
+
+```{r,message=FALSE,warning=FALSE}
+plot(rules_academic,engine='plotly')
+```
+
+#### Graph 
+
+```{r}
+plot(sort(rules_academic,by="confidence")[1:5], method = "graph",  engine = "htmlwidget")
+```
+
+### {-}
+
+# Summary
+
+In this article we saw that association rules can be used to find some interesting relationships in survey data. With apriori algorithm we can easily perform analysis that can provide valuable patterns in data. There are many rules that can be unwrapped from not pleasant data format. We discovered dissimilarities between academic and private sector in usage of algorithms. In tools part we noticed that few languages are commonly shared but there were also differences like SAS in finance or Matlab/Octave in academia. For me the most important thing that I got out of this analysis is to be open for new tools/methods because in future job I will use probably a few of them.

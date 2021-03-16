@@ -1,0 +1,272 @@
+---
+title: "Clustering real estate prices"
+author: "Rafał Łobacz"
+date: "2021-02-10"
+output:
+  html_document:
+    code_folding: show
+---
+
+# Introduction
+
+Clustering is part of the unsupervised learning that divides data into some number of groups(clusters). It can be used in many applications like market segmentation, anomaly detection, medical imaging and many more. In this article I would like to perform clustering on data about apartment prices. In order to do that I will use data from National Bank of Poland about apartment prices divided by biggest polish cities. Analysis will firstly consist the search of the optimal number of clusters and then based on chosen number, clustering algorithms will be performed.          
+
+# Exploratory data analysis
+
+Reading libraries first.
+```{r message=FALSE}
+
+library(cluster)
+library(factoextra)
+library(flexclust)
+library(fpc)
+library(clustertend)
+library(ClusterR)
+library(kableExtra)
+
+library(data.table)
+library(stringr)
+library(tidyverse)
+library(knitr)
+library(ggthemes)
+library(plotly)
+
+```
+
+Data about cities comes from NBP quarterly raports about real estates [link](https://www.nbp.pl/home.aspx?f=/publikacje/rynek_nieruchomosci/index2.html). In order to make this research reproducible I copied whole dataset into folded R chunk below.
+
+Reading data
+```{r class.source = 'fold-hide',message=FALSE,warning=FALSE}
+data_1 <- fread("Białystok	Bydgoszcz	Gdańsk	Gdynia	Katowice	Kielce	Kraków	Lublin	Łódź	Olsztyn	Opole	Poznań	Rzeszów	Szczecin	Warszawa	Wrocław
+3070,00	2530,00	4541,00	5756,00	2507,52	2424,92	7114,00	3160,00	2740,00	3414,43	3164,08	3751,81	2851,00	3189,80	7179,00	5260,77
+3408,00	2784,00	5406,00	6496,00	2649,12	3127,42	7383,00	3562,00	3316,00	3925,00	3584,54	4461,66	3734,00	3856,59	8751,00	5856,74
+3986,00	3607,00	6115,00	7211,00	3703,64	3903,90	8369,00	3986,00	4130,00	5049,13	3349,43	6104,06	4187,00	4734,75	9316,00	6746,54
+4418,00	3932,00	6602,00	6747,00	4152,12	4120,78	8272,00	4699,00	4609,00	5352,28	4149,53	6698,11	4647,00	4958,81	9740,00	7038,09
+4580,00	4150,00	6740,00	7188,00	4150,53	4230,50	8255,00	4815,00	4721,00	5394,15	4135,53	6386,66	4814,00	5093,84	10078,00	7193,98
+4637,00	3956,00	6824,00	6917,00	4473,12	4299,54	8140,00	4962,00	4686,00	5169,65	4362,62	6471,78	4849,00	5297,29	9952,00	7265,66
+4738,00	3685,00	6795,00	6984,00	4739,42	4528,46	7979,00	5141,00	4737,00	5199,61	4235,14	6235,31	4901,00	5124,49	9850,00	7138,06
+4853,00	4202,00	6704,00	6854,00	4638,18	4478,01	7934,00	5071,00	4668,00	5014,25	4068,43	6096,79	4824,00	5179,89	9783,00	7158,82
+4777,00	4151,00	6608,00	6960,00	4554,93	4573,55	7180,00	5111,00	4544,00	4964,12	4186,67	5979,68	4790,00	5174,22	9679,00	6921,94
+4744,00	4240,00	6793,00	7059,00	4360,31	4356,19	7251,00	5091,00	4873,00	4946,72	4142,94	5953,70	4640,00	5079,09	10196,00	6859,45
+4613,00	4095,00	6648,00	7104,00	4340,42	4467,06	6864,00	5062,00	4730,00	4730,22	4234,59	5978,52	4683,00	4965,16	9626,00	6784,57
+4614,00	4017,00	6644,00	6949,00	4288,48	4286,91	6678,00	5017,00	4431,00	4710,13	4282,80	6216,01	4684,00	4860,20	10133,00	6748,86
+4641,00	4244,00	6449,00	6901,00	4370,00	4498,77	6564,00	5010,00	4643,00	4733,41	4082,64	5970,06	4641,00	4964,27	9705,24	6841,82
+4620,00	4203,00	6350,00	6991,00	4181,00	4433,91	6734,00	4977,00	4400,00	4719,66	4154,50	5924,45	4681,00	4834,07	9671,30	6757,76
+4729,00	4202,00	6465,00	7032,00	4136,00	4604,93	6916,00	5028,00	4558,00	4763,00	4166,15	6073,87	4611,00	4867,64	9901,01	6725,00
+4709,00	4270,00	6491,00	6901,00	4256,00	4505,51	6937,00	5037,00	4407,00	4709,39	4193,79	6122,49	4654,00	4843,57	9982,01	6678,00
+4752,00	4233,00	6286,00	6700,00	4323,00	4626,17	6909,00	5063,00	4406,00	4759,09	4295,47	6012,14	4615,00	4864,11	9787,59	6562,00
+4809,00	4005,00	6494,00	6510,00	4108,00	4706,91	6964,00	5139,00	4457,00	4726,00	4137,34	6047,34	4696,00	4760,22	9766,84	6602,00
+4862,00	4055,00	6536,00	6522,00	4233,84	4678,33	7206,00	5161,00	4469,00	4719,00	4222,24	5940,19	4726,00	4759,00	9706,00	6576,00
+4810,00	4153,00	6573,00	6493,00	3974,14	4622,27	7246,00	5199,00	4363,00	4698,00	4246,00	5910,99	4777,00	4733,00	9471,75	6582,00
+4778,00	4058,00	6472,00	6430,00	3964,85	4436,11	6949,00	5149,00	4238,00	4679,00	4455,65	5804,14	4729,00	4707,00	9396,57	6541,00
+4754,00	3923,00	6241,91	6462,60	4152,49	4535,64	6989,00	5050,00	3990,00	4625,00	4174,98	5736,53	4791,00	4704,00	9363,30	6397,00
+4724,00	3885,00	6384,00	6370,00	4052,69	4510,47	6775,56	5057,00	4006,00	4628,00	4171,12	5604,16	4801,00	4586,21	9110,86	6367,00
+4674,00	3932,00	6309,52	6475,04	4121,55	4545,12	6724,24	5076,00	4033,00	4632,00	3981,23	5534,71	4905,00	4431,00	9035,28	6307,00
+4588,00	3606,00	6273,74	6451,45	4057,38	4464,39	6617,04	5065,00	3794,00	4544,00	4065,77	5518,54	4935,00	4441,71	8899,90	6182,00
+4583,00	3882,00	6239,75	6474,53	4137,88	4469,15	6648,38	4995,00	3854,00	4465,00	4012,61	5446,27	4912,00	4336,21	8767,55	6100,00
+4576,00	3639,00	6277,90	6608,04	3955,35	4366,75	6644,00	4491,00	3975,00	4364,80	4073,76	5406,26	4908,00	4434,36	8606,02	5959,00
+4546,00	3713,00	6151,73	6337,04	4000,76	4338,06	6488,58	4858,00	4058,00	4424,73	4062,40	5657,19	4890,00	4170,89	8637,97	5986,00
+4520,00	3607,00	6007,49	6618,06	3973,02	4330,15	6585,00	4935,00	4018,00	4389,59	4246,39	5628,48	4910,00	4151,63	8544,23	5984,00
+4494,00	3736,00	6136,03	6629,00	3927,87	4215,41	6537,00	4901,00	3978,00	4417,78	4174,43	5717,87	4934,00	4247,23	8626,63	6098,00
+4510,00	4019,00	6102,82	6410,00	3915,27	4215,32	6754,22	4886,00	3984,00	4442,92	3974,74	5830,06	4946,00	4399,45	8622,18	6096,00
+4450,00	3536,00	6073,01	6492,00	4045,57	4186,47	6682,36	4884,00	3915,00	4420,13	4231,23	5742,14	4908,00	4315,46	8690,68	5899,00
+4443,00	3758,00	5858,06	6657,00	4026,95	4174,16	6644,17	4831,00	3907,00	4405,31	4096,66	5805,92	4933,00	4288,72	8625,78	5980,00
+4445,00	3830,00	5872,59	6466,00	3917,61	4147,65	6860,48	4854,00	3892,00	4316,01	4109,18	5693,84	4953,00	4345,76	8635,85	6017,00
+4423,00	3685,00	5981,75	6324,04	3928,25	4053,29	7030,00	4844,00	3923,00	4347,68	4141,30	5847,74	4959,00	4352,91	8607,92	5901,00
+4463,00	3765,00	5949,31	6187,43	3978,21	4028,79	6977,53	4953,00	3865,00	4301,00	4157,01	5830,81	5010,00	4414,14	8552,52	5812,00
+4402,00	3949,00	5993,17	6312,03	3936,15	4066,86	6947,76	4884,00	3872,00	4339,69	4200,09	5408,85	4973,00	4213,56	8565,03	5930,00
+4456,00	3774,00	6132,55	6402,07	3909,23	4034,51	6794,80	4893,00	3850,00	4309,58	4232,34	5729,95	4954,00	4235,33	8655,34	5914,00
+4488,00	3875,00	6192,65	6406,70	3920,09	4026,07	6827,49	4947,00	3940,00	4373,78	4186,52	5940,92	4916,00	4432,22	8657,87	5951,00
+4536,00	3834,00	6319,00	6795,02	3970,73	4004,12	6756,32	4990,00	4009,00	4379,97	4221,20	6040,45	4914,00	4355,76	8720,91	5984,00
+4578,00	3909,00	6226,18	6729,56	3988,05	4058,49	6837,00	4992,00	4036,00	4352,94	4365,74	6092,56	4954,00	4396,02	8777,94	6062,00
+4568,00	4048,00	6455,36	6653,74	3957,20	4008,01	6910,00	4980,00	4096,00	4383,91	4253,58	6122,68	4953,00	4358,24	8708,57	6165,00
+4580,00	4123,00	6565,67	6822,45	3929,43	4091,04	6859,13	5047,00	4149,00	4436,62	4394,75	5954,88	4995,00	4461,35	8815,73	6253,00
+4597,00	4195,00	6969,52	7186,27	3944,79	4064,92	6992,49	5073,00	4203,00	4471,26	4521,89	6079,52	5023,00	4469,04	8884,97	6267,00
+4597,00	4285,00	7035,25	7204,31	3899,19	4117,17	7204,80	5102,00	4241,00	4449,00	4580,94	6052,79	5121,00	4672,46	9008,71	6293,00
+4746,00	4328,00	7345,07	7383,30	4012,85	4189,23	7593,25	5142,00	4314,00	4516,00	4585,99	6349,40	5225,00	4654,28	9235,34	6365,47
+4921,00	4460,00	7727,44	7301,35	4314,63	4308,88	7767,10	5139,00	4432,00	4655,01	4787,42	6524,63	5394,00	4752,46	9346,35	6422,75
+5059,00	4488,00	8567,19	8005,52	4146,17	4364,07	8006,10	5339,00	4642,00	4728,43	4971,85	6651,53	5414,00	4933,30	9347,00	6485,00
+5134,00	4526,00	8739,88	8559,82	4173,06	4364,87	8059,37	5295,00	4711,00	4867,12	5005,95	6762,69	5476,00	4973,70	9611,98	6491,00
+5333,00	4684,00	8856,31	8490,24	4734,21	4540,63	8465,92	5507,00	4811,00	5025,52	5191,66	6939,32	5659,00	5176,81	10277,19	6571,00
+5718,00	4789,00	9415,16	8668,09	4953,18	4749,88	8697,03	5641,00	5053,00	5252,35	5236,14	6958,78	5851,00	5458,06	10287,43	7339,00
+5743,00	4970,00	9344,85	9440,14	4913,98	4759,32	8898,79	5733,00	5116,00	5397,12	5313,16	7073,27	6132,00	5657,47	10575,01	7441,00
+5794,12	5252,00	9957,57	9138,80	5617,63	4796,67	8912,86	5965,00	5203,00	5536,09	5325,12	7187,92	6243,00	5786,02	10815,53	7572,00
+6063,29	5430,00	9888,55	9078,40	5431,37	5078,87	9109,02	6170,59	5392,00	5674,19	5539,52	7638,71	6552,00	5856,67	11191,65	7720,00
+6245,29	5553,00	10562,09	8582,53	5780,84	5446,54	9517,66	6666,33	5465,00	5812,99	5848,66	7809,13	6904,00	6158,59	11656,39	8158,14
+6487,81	5851,00	10332,01	8562,56	5820,86	5451,23	9672,44	6835,37	5431,52	6015,25	5934,13	7823,23	7006,49	6217,79	11519,55	8024,05
+", dec=",")
+data_1 <- data.frame(data_1)
+rownames(data_1) <- seq(2006.75,2020.5,by=0.25)
+
+data_1_long <- reshape2::melt(data_1)
+colnames(data_1_long) <- c('City','Price')
+data_1_long$Date <- rep(seq(2006.75,2020.5,by=0.25),16)
+```
+
+```{r}
+data_1 %>% kbl(row.names=T) %>% kable_paper() %>% scroll_box(width = "900px", height = "400px") 
+```
+
+As we can see data is from the third quarter of 2006 year to second quarter of 2020 year and contain 16 biggest polish cities. Let`s see some basic statistics.
+
+```{r}
+summary(data_1) %>% kable()%>%
+  kable_material(c("striped", "hover"))  %>% scroll_box(width = "900px", height = "400px") 
+```
+
+Looking only at those simple statistics we can see that prices vary a lot between cities. There are cities that average price in 2020 was lower than almost 14 years ago in Warszawa or Kraków. This is a good sing for clustering analysis. Let`s visualise those prices now.  
+
+## {.tabset .tabset-pills}
+
+```{r,results='asis'}
+myplots = lapply(data_1, function(col)
+  ggplot(data_1) + geom_line(aes(y=col,x=seq(2006.75,2020.5,by=0.25)),size=2,color="brown3") + 
+    coord_cartesian(ylim=c(0,12000)) + labs( x ="Time", y = "Price in PLN") + theme_wsj() + theme(axis.title=element_text(size=12)) )
+
+k=1
+for(i in myplots){
+  cat('###',names(myplots)[k],'<br>',' \n')
+  print(i)
+  cat('\n', '<br>', '\n\n')
+  k=k+1
+}
+``` 
+
+## {.unlisted .unnumbered}
+
+Inspecting run charts we can see that prices in cities are on different levels. Although their dynamics look very similar in almost every one of them. There were high growth at the beginning, followed by some stagnation and rapid growth at the end.\
+Let`s make boxplot and run chart with all cities at once, maybe we will be able to spot the number of clusters by naked eye.
+
+## {.tabset}
+
+### Boxplot
+
+```{r}
+data_1_long %>% ggplot() + geom_boxplot(aes(y=Price,x=reorder(City,Price),color=City)) + theme_bw() +
+  theme(legend.position = "none") + coord_flip() + labs(x= "City",y='Price')
+```
+
+### Run chart
+
+```{r}
+
+ggplotly(data_1_long %>% ggplot() + geom_line(aes(y=Price,x=Date,color=City)) + theme_bw())
+
+```
+
+## {-}
+
+Inspecting both plots we can clearly distinguish 3 clusters. First one consist only Warszawa, second Kraków, Gdynia, Gdańsk, Wrocław and Poznan, and third cluster will include all other cities. This is exactly how NBP state that this data should be clustered.\ 
+Let`s run clustering algorithms now. First we run hopkins test to confirm that data is clusterable and then we will check optimal number of clusters using 3 statistics: slhouette, wss and gap statistics.
+
+# Clustering
+
+```{r}
+get_clust_tendency(t(data_1),15,graph=FALSE)
+```
+
+Hopkins statistic is equal to 0.76. Hopking value of 0.5 means that data is random. When it it close to 1 we can assume that data is highly clusterable and clusters are visible. In our case hopkins value is in the middle between 0.5 and 1. We will state that data is clusterable, although silhouette and other statistics that measure quality of clustering will probably not be the highest.
+
+## {.tabset .tabset-pills}
+```{r,results='asis'}
+
+for(i in c("silhouette", "wss" ,"gap_stat")){
+  cat('###',i,'<br>',' \n')
+  print(fviz_nbclust(t(data_1), FUNcluster = kmeans, method = i))
+  cat('\n', '<br>', '\n\n')
+}
+```
+
+## {.unlisted .unnumbered}
+
+When we check optimal number of clusters using three statistics only silhouette and wss are agreeing with each other. They state that optimal number of clusters are two but the silhouette value for three clusters is almost as good as for two. Now we will use the same function but with four different algorithms and same statistic - silhouette.
+
+## {.tabset .tabset-pills}
+```{r,results='asis'}
+k=1
+vec <- c("kmeans","pam","clara","hcut")
+for(i in c(kmeans,pam,clara,hcut)){
+  cat('###',vec[k],'<br>',' \n')
+  print(fviz_nbclust(t(data_1), FUNcluster = i, method = "silhouette"))
+  cat('\n', '<br>', '\n\n')
+  k=k+1
+}
+```
+
+## {.unlisted .unnumbered}
+
+We see that the charts of optimal numbers are almost the same. Two or three clusters should be chosen. I am going to be in line with NBP and I will choose 3 clusters. Let`s visualise them.
+
+## {.tabset}
+
+### kmeans 
+
+```{r}
+
+fviz_cluster(eclust(t(data_1),FUNcluster = "kmeans" ,k = 3,graph = F))
+
+```
+
+### pam
+
+```{r}
+
+fviz_cluster(eclust(t(data_1),FUNcluster = "pam" ,k = 3,graph = F))
+
+```
+
+### clara
+
+```{r}
+
+fviz_cluster(eclust(t(data_1),FUNcluster = "clara" ,k = 3,graph = F))
+
+```
+
+### hclust
+
+```{r}
+
+fviz_cluster(eclust(t(data_1),FUNcluster = "hclust" ,k = 3))
+
+```
+
+## {-}
+
+All the algorithms provided the same clustering. This is great news. It looks like choosing three clusters was good option and does not matter which algorithm to cluster we will use. They do not have problems with clustering the data. Let`s measure quality of clustering using silhouette plot.
+
+```{r}
+
+fviz_silhouette(eclust(t(data_1),"kmeans", hc_metric="euclidean",k=3,graph=FALSE))
+
+```
+
+Silhouette width is quite high 0.66. This only assure us that performed analysis was proper. At the end I will repeat two plots made at the beginning but they will be colored according to clusters assignment.
+
+```{r}
+c2 <- eclust(t(data_1),FUNcluster = "kmeans" ,k = 3,graph = FALSE)
+data_1_long <- merge(data_1_long,data.frame('nm' = names(c2$cluster),'cl' = c2$cluster),by.x='City',by.y='nm')
+```
+
+## {.tabset}
+
+### Boxplot
+
+```{r}
+data_1_long %>% ggplot() + geom_boxplot(aes(y=Price,x=reorder(City,Price),color=cl)) + theme_bw() +
+  theme(legend.position = "none") + coord_flip() + labs(x= "City",y='Price')
+```
+
+### Run chart
+
+```{r}
+
+ggplotly(data_1_long %>% ggplot() + geom_line(aes(y=Price,x=Date,col=cl)) + theme_bw())
+
+```
+
+## {-}
+
+# Summary 
+
+To sum up, goal of this analysis was to check whether we can cluster the cities according to their apartment prices. The results showed that the chosen data could be easily clustered using basic algorithms like kmeans, pam or hierarchical clustering. Clusters were clearly visible. Results showed that the NBP was right in choosing the number of clusters and their composition. Research depicted also how much information we can obtain by performing exploratory data analysis. Looking just at descriptive statistics and ploting the data, gave us important directions of how many clusters should be chosen and even how the clusters should look. Clustering one dimensional data should be always preceded by EDA that will help us to better understand the data and can improve further analysis.
